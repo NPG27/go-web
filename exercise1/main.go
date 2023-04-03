@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -22,6 +23,8 @@ type Product struct {
 }
 
 var products []Product
+var lastID int
+var productByCode = make(map[string]Product)
 
 func loadJSONFile(path string) error {
 	var (
@@ -39,6 +42,12 @@ func loadJSONFile(path string) error {
 		return errors.New("Cannot read file")
 	}
 	err = json.Unmarshal(byteValue, &products)
+	if err == nil {
+		lastID = products[len(products)-1].ID
+		for _, product := range products {
+			productByCode[product.CodeValue] = product
+		}
+	}
 	if err != nil {
 		return errors.New("Cannot load json")
 	}
@@ -89,6 +98,62 @@ func GetProduct(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, gin.H{"products": filteredProducts})
 }
 
+func validateProduct(product Product) bool {
+	isCorrect := true
+	if product.Name == "" {
+		isCorrect = false
+	}
+	if product.Quantity == 0 {
+		isCorrect = false
+	}
+	if product.CodeValue == "" {
+		isCorrect = false
+	}
+	if product.Expiration == "" {
+		isCorrect = false
+	}
+	if product.Price == float64(0) {
+		isCorrect = false
+	}
+	return isCorrect
+}
+
+func CreateProduct(c *gin.Context) {
+	var newProduct Product
+	newProduct.IsPublished = false
+	if err := c.ShouldBindJSON(&newProduct); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// Validate product fields
+	if !validateProduct(newProduct) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Product is missing required values"})
+		return
+	}
+
+	// Validate code value
+	if _, codeValueExists := productByCode[newProduct.CodeValue]; codeValueExists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Code value already exists"})
+		return
+	}
+
+	// Validate expiration date
+	_, err := time.Parse("02/01/2006", newProduct.Expiration)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid expiration date format"})
+		return
+	}
+
+	lastID++
+	newProduct.ID = lastID
+	products = append(products, newProduct)
+	productByCode[newProduct.CodeValue] = newProduct
+	c.JSON(http.StatusCreated, newProduct)
+}
+
 func main() {
 	var err error
 	err = loadJSONFile("./exercise1/products.json")
@@ -102,6 +167,6 @@ func main() {
 	router.GET("/ping", func(c *gin.Context) {
 		c.String(http.StatusOK, "pong")
 	})
-
+	router.POST("/products", CreateProduct)
 	router.Run(":8080")
 }
